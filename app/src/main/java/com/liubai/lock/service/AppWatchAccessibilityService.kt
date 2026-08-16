@@ -1,7 +1,8 @@
-package com.liubai.lock.core
+package com.liubai.lock.service
 
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
+import com.liubai.lock.core.LockStateRepo
 import com.liubai.lock.core.OverlayController
 
 /**
