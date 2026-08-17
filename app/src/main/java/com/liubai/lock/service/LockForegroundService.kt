@@ -112,6 +112,7 @@ class LockForegroundService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(ticker)
+        unlockRunnable?.let { handler.removeCallbacks(it) }
         try {
             unregisterReceiver(screenReceiver)
         } catch (_: Exception) {
@@ -188,7 +189,9 @@ class LockForegroundService : Service() {
         if (end <= 0) return
         unlockRunnable?.let { handler.removeCallbacks(it) }
         val r = Runnable {
-            if (LockStateRepo.isLocked(this)) doUnlock()
+            // 只要仍标记为锁定（或 lockEnd 仍大于 0），就执行一次解锁；
+            // 防止 isLocked() 恰好在临界点变成 false 导致 doUnlock 被跳过。
+            if (LockStateRepo.lockActiveMem || LockStateRepo.getLockEnd(this) > 0) doUnlock()
         }
         unlockRunnable = r
         val remain = end - System.currentTimeMillis()

@@ -26,11 +26,17 @@ object OverlayController {
     private var popupRemainText: TextView? = null
     private var ring: ProgressBar? = null
     private var popup: View? = null
+    private var selfCheck: Runnable? = null
 
     val isVisible: Boolean get() = overlayView != null
 
     fun show(context: Context, remainMs: Long, totalMs: Long, withPopup: Boolean) {
         handler.post {
+            // 倒计时已结束：不再重建，主动尝试移除任何残留覆盖层
+            if (remainMs <= 0) {
+                if (!LockStateRepo.lockActiveMem) hide(context)
+                return@post
+            }
             // 最终防线：若解锁已完成，任何滞后的重建请求都直接丢弃
             if (!LockStateRepo.lockActiveMem) return@post
             val appCtx = context.applicationContext
@@ -65,10 +71,30 @@ object OverlayController {
                 overlayView = view
                 update(remainMs, totalMs)
                 popup?.visibility = if (withPopup) View.VISIBLE else View.GONE
+                scheduleSelfCheck(context)
             } catch (_: Exception) {
                 // 无悬浮窗权限等情况：静默失败，等待用户授权后重试
             }
         }
+    }
+
+    /** 覆盖层自我保护：即使前台服务/Handler 调度失效，自己也要能检测到锁定结束并移除 */
+    private fun scheduleSelfCheck(context: Context) {
+        selfCheck?.let { handler.removeCallbacks(it) }
+        val r = object : Runnable {
+            override fun run() {
+                if (overlayView == null) return
+                if (!LockStateRepo.lockActiveMem || !LockStateRepo.isLocked(context)) {
+                    // 锁定已结束：立即自毁
+                    LockStateRepo.lockActiveMem = false
+                    hide(context)
+                    return
+                }
+                handler.postDelayed(this, 400L)
+            }
+        }
+        selfCheck = r
+        handler.postDelayed(r, 400L)
     }
 
     fun updateCountdown(remainMs: Long, totalMs: Long) {
@@ -84,11 +110,12 @@ object OverlayController {
 
     fun hide(context: Context) {
         handler.post {
+            selfCheck?.let { handler.removeCallbacks(it); selfCheck = null }
             try {
                 overlayView?.let {
                     val wm = context.applicationContext
                         .getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                    wm.removeView(it)
+                    wm.removeViewImmediate(it)
                 }
             } catch (_: Exception) {
             }
