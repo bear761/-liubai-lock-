@@ -145,7 +145,10 @@ class MainActivity : AppCompatActivity() {
             toastAndOpen("请先授予悬浮窗权限", Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
             return
         }
-        LockStateRepo.setLockEnd(this, System.currentTimeMillis() + 30_000)
+        val total = 30_000L
+        LockStateRepo.setLockTotalMs(this, total)
+        LockStateRepo.setLockEnd(this, System.currentTimeMillis() + total)
+        LockStateRepo.lockActiveMem = true
         LockForegroundService.start(this)
         Toast.makeText(this, "测试锁定 30 秒已触发", Toast.LENGTH_SHORT).show()
     }

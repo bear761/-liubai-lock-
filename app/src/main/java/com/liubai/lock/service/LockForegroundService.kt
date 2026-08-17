@@ -50,7 +50,9 @@ class LockForegroundService : Service() {
                 onTick()
             } catch (_: Exception) {
             }
-            handler.postDelayed(this, 1000)
+            // 锁定期缩短心跳到 250ms，避免最后不足 1 秒的余量卡住不退出
+            val interval = if (LockStateRepo.isLocked(this@LockForegroundService)) 250L else 1000L
+            handler.postDelayed(this, interval)
         }
     }
 
@@ -119,17 +121,20 @@ class LockForegroundService : Service() {
         if (LockStateRepo.isLocked(this)) {
             val remain = LockStateRepo.getLockEnd(this) - System.currentTimeMillis()
             if (remain <= 0) {
-                // 解锁：清零使用时长，进入下一轮统计
+                // 解锁：先清内存标志（防无障碍事件竞态重建覆盖层），再清状态、移除覆盖层
+                LockStateRepo.lockActiveMem = false
                 LockStateRepo.setUsageAccumMs(this, 0L)
                 LockStateRepo.setLockEnd(this, 0L)
                 OverlayController.hide(this)
                 updateNotification("已解锁，重新开始统计")
             } else {
+                // 进程重启 / 开机恢复等情况：重设内存标志并重建覆盖层（不重复弹窗）
+                if (!LockStateRepo.lockActiveMem) LockStateRepo.lockActiveMem = true
+                val total = LockStateRepo.getLockTotalMs(this).let { if (it > 0) it else LockStateRepo.lockDurationMs(this) }
                 if (OverlayController.isVisible) {
-                    OverlayController.updateCountdown(remain, LockStateRepo.lockDurationMs(this))
+                    OverlayController.updateCountdown(remain, total)
                 } else {
-                    // 进程重启 / 开机恢复等情况：重建覆盖层（不重复弹窗）
-                    OverlayController.show(this, remain, LockStateRepo.lockDurationMs(this), withPopup = false)
+                    OverlayController.show(this, remain, total, withPopup = false)
                 }
                 updateNotification("休息中 · 剩余 " + LockStateRepo.fmt(remain))
             }
@@ -154,7 +159,9 @@ class LockForegroundService : Service() {
     /** 触发全局锁定 */
     private fun triggerLock() {
         val total = LockStateRepo.lockDurationMs(this)
+        LockStateRepo.setLockTotalMs(this, total)
         LockStateRepo.setLockEnd(this, System.currentTimeMillis() + total)
+        LockStateRepo.lockActiveMem = true
         // 顶回桌面（等效强制退出当前 App）
         AppWatchAccessibilityService.instance
             ?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)

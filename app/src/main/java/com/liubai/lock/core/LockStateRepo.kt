@@ -18,6 +18,7 @@ object LockStateRepo {
     private const val K_LAST_SCREEN_OFF = "last_screen_off_at"
     private const val K_THRESHOLD = "threshold_min"
     private const val K_LOCK_DURATION = "lock_duration_min"
+    private const val K_LOCK_TOTAL = "lock_total_ms"
     private const val K_WHITELIST = "whitelist"
 
     const val DEFAULT_THRESHOLD_MIN = 25
@@ -29,6 +30,10 @@ object LockStateRepo {
     /** 运行时前台包名（由无障碍服务写入） */
     @Volatile
     var foregroundPkg: String? = null
+
+    /** 运行时锁定内存标志（同步读写，避免 SharedPreferences apply 竞态导致覆盖层被反复重建） */
+    @Volatile
+    var lockActiveMem: Boolean = false
 
     private fun p(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -53,6 +58,9 @@ object LockStateRepo {
     fun getLockDurationMin(ctx: Context): Int = p(ctx).getInt(K_LOCK_DURATION, DEFAULT_LOCK_MIN)
     fun setLockDurationMin(ctx: Context, v: Int) { p(ctx).edit().putInt(K_LOCK_DURATION, v.coerceIn(1, 60)).apply() }
     fun lockDurationMs(ctx: Context): Long = getLockDurationMin(ctx) * 60_000L
+
+    fun getLockTotalMs(ctx: Context): Long = p(ctx).getLong(K_LOCK_TOTAL, 0L)
+    fun setLockTotalMs(ctx: Context, v: Long) { p(ctx).edit().putLong(K_LOCK_TOTAL, v).apply() }
 
     // ---- 白名单 ----
     fun getWhitelist(ctx: Context): MutableSet<String> {

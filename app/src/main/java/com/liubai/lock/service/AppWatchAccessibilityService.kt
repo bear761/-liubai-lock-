@@ -34,10 +34,12 @@ class AppWatchAccessibilityService : AccessibilityService() {
         LockStateRepo.foregroundPkg = pkg
 
         // 锁定期：非白名单 App 一进入前台 → 立即顶回 + 覆盖 + 弹窗
-        if (LockStateRepo.isLocked(this) && !LockStateRepo.isWhitelisted(this, pkg)) {
+        // 用内存标志判断，避免锁定结束时 SharedPreferences apply 竞态导致覆盖层被反复重建（无法退出）
+        if (LockStateRepo.lockActiveMem && !LockStateRepo.isWhitelisted(this, pkg)) {
             performGlobalAction(GLOBAL_ACTION_HOME)
             val remain = LockStateRepo.getLockEnd(this) - System.currentTimeMillis()
-            OverlayController.show(this, remain, LockStateRepo.lockDurationMs(this), withPopup = true)
+            val total = LockStateRepo.getLockTotalMs(this).let { if (it > 0) it else LockStateRepo.lockDurationMs(this) }
+            OverlayController.show(this, remain, total, withPopup = true)
         }
     }
 
