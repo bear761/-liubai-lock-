@@ -44,6 +44,9 @@ class LockForegroundService : Service() {
     private var screenOffAt = 0L
     private var lastNotiText = ""
 
+    /** 精确到 lockEnd 的解锁任务，避免 ticker 250ms 粒度在最后 <1s 时漏掉解锁 */
+    private var unlockRunnable: Runnable? = null
+
     private val ticker = object : Runnable {
         override fun run() {
             try {
@@ -121,12 +124,7 @@ class LockForegroundService : Service() {
         if (LockStateRepo.isLocked(this)) {
             val remain = LockStateRepo.getLockEnd(this) - System.currentTimeMillis()
             if (remain <= 0) {
-                // 解锁：先清内存标志（防无障碍事件竞态重建覆盖层），再清状态、移除覆盖层
-                LockStateRepo.lockActiveMem = false
-                LockStateRepo.setUsageAccumMs(this, 0L)
-                LockStateRepo.setLockEnd(this, 0L)
-                OverlayController.hide(this)
-                updateNotification("已解锁，重新开始统计")
+                doUnlock()
             } else {
                 // 进程重启 / 开机恢复等情况：重设内存标志并重建覆盖层（不重复弹窗）
                 if (!LockStateRepo.lockActiveMem) LockStateRepo.lockActiveMem = true
@@ -137,6 +135,7 @@ class LockForegroundService : Service() {
                     OverlayController.show(this, remain, total, withPopup = false)
                 }
                 updateNotification("休息中 · 剩余 " + LockStateRepo.fmt(remain))
+                if (unlockRunnable == null) scheduleUnlock()
             }
         } else {
             // 统计：屏幕亮 + 前台为非白名单 App
@@ -168,6 +167,32 @@ class LockForegroundService : Service() {
         // 全屏覆盖 + 「请稍作休息」弹窗
         OverlayController.show(this, total, total, withPopup = true)
         updateNotification("休息中 · 剩余 " + LockStateRepo.fmt(total))
+        scheduleUnlock()
+    }
+
+    /** 统一解锁：清内存标志、清持久化状态、移除覆盖层 */
+    private fun doUnlock() {
+        unlockRunnable?.let { handler.removeCallbacks(it) }
+        unlockRunnable = null
+        LockStateRepo.lockActiveMem = false
+        LockStateRepo.setUsageAccumMs(this, 0L)
+        LockStateRepo.setLockEnd(this, 0L)
+        LockStateRepo.setLockTotalMs(this, 0L)
+        OverlayController.hide(this)
+        updateNotification("已解锁，重新开始统计")
+    }
+
+    /** 在 lockEnd 到点时精确执行解锁，避免依赖 ticker 轮询 */
+    private fun scheduleUnlock() {
+        val end = LockStateRepo.getLockEnd(this)
+        if (end <= 0) return
+        unlockRunnable?.let { handler.removeCallbacks(it) }
+        val r = Runnable {
+            if (LockStateRepo.isLocked(this)) doUnlock()
+        }
+        unlockRunnable = r
+        val remain = end - System.currentTimeMillis()
+        if (remain > 0) handler.postDelayed(r, remain) else handler.post(r)
     }
 
     // ---- 通知 ----

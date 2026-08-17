@@ -31,6 +31,8 @@ object OverlayController {
 
     fun show(context: Context, remainMs: Long, totalMs: Long, withPopup: Boolean) {
         handler.post {
+            // 最终防线：若解锁已完成，任何滞后的重建请求都直接丢弃
+            if (!LockStateRepo.lockActiveMem) return@post
             val appCtx = context.applicationContext
             if (overlayView != null) {
                 update(remainMs, totalMs)

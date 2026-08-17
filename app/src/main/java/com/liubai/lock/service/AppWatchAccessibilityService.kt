@@ -1,6 +1,8 @@
 package com.liubai.lock.service
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import com.liubai.lock.core.LockStateRepo
 import com.liubai.lock.core.OverlayController
@@ -20,6 +22,8 @@ class AppWatchAccessibilityService : AccessibilityService() {
         val isRunning: Boolean get() = instance != null
     }
 
+    private val handler = Handler(Looper.getMainLooper())
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -33,13 +37,18 @@ class AppWatchAccessibilityService : AccessibilityService() {
 
         LockStateRepo.foregroundPkg = pkg
 
-        // 锁定期：非白名单 App 一进入前台 → 立即顶回 + 覆盖 + 弹窗
-        // 用内存标志判断，避免锁定结束时 SharedPreferences apply 竞态导致覆盖层被反复重建（无法退出）
+        // 锁定期：非白名单 App 一进入前台 → 立即顶回桌面
+        // 覆盖层由前台服务的 ticker / 精确解锁任务负责维护，避免无障碍事件在解锁临界点
+        // 因为读取到旧的 lockActiveMem 而重新创建覆盖层导致「卡住无法退出」。
         if (LockStateRepo.lockActiveMem && !LockStateRepo.isWhitelisted(this, pkg)) {
             performGlobalAction(GLOBAL_ACTION_HOME)
-            val remain = LockStateRepo.getLockEnd(this) - System.currentTimeMillis()
-            val total = LockStateRepo.getLockTotalMs(this).let { if (it > 0) it else LockStateRepo.lockDurationMs(this) }
-            OverlayController.show(this, remain, total, withPopup = true)
+            handler.post {
+                // 主线程再次校验：只有仍然处于锁定状态才允许重建覆盖层
+                if (!LockStateRepo.lockActiveMem || !LockStateRepo.isLocked(this)) return@post
+                val remain = LockStateRepo.getLockEnd(this) - System.currentTimeMillis()
+                val total = LockStateRepo.getLockTotalMs(this).let { if (it > 0) it else LockStateRepo.lockDurationMs(this) }
+                OverlayController.show(this, remain, total, withPopup = true)
+            }
         }
     }
 
